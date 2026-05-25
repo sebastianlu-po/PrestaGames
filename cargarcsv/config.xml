@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+	<name>cargarcsv</name>
+	<displayName><![CDATA[CargarCSV]]></displayName>
+	<version><![CDATA[1.0.1]]></version>
+	<description><![CDATA[Importa CSV a productos de prestashop]]></description>
+	<author><![CDATA[Sebastián Luna Polo]]></author>
+	<tab><![CDATA[quick_bulk_update]]></tab>
+	<is_configurable>1</is_configurable>
+	<need_instance>1</need_instance>
+</module>
