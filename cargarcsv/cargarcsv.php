@@ -168,34 +168,15 @@ class CargarCSV extends Module
     }
  
     /**
-    * Add the CSS & JavaScript files you want to be loaded in the BO.
-    */
-    public function hookDisplayBackOfficeHeader()
-    {
-        if (Tools::getValue('configure') == $this->name) {
-            $this->context->controller->addJS($this->_path.'views/js/back.js');
-            $this->context->controller->addCSS($this->_path.'views/css/back.css');
-        }
-    }
- 
-    /**
-     * Add the CSS & JavaScript files you want to be added on the FO.
-     */
-    public function hookHeader()
-    {
-        $this->context->controller->addJS($this->_path.'/views/js/front.js');
-        $this->context->controller->addCSS($this->_path.'/views/css/front.css');
-    }
- 
-    /**
      * Parses the CSV file and imports or updates products dynamically.
      * It handles dynamic category association and image downloads.
+     * Expected CSV columns: ID, Reference, Name, PriceExcludingTax, PriceIncludingTax, Stock, Category, Summary, Description, CoverURL
      */
     public function importarCatalogo()
     {
         $fileName = $this->local_path . "catalogo.csv";
  
-        if (($fileHandler = fopen($fileName, "r")) !== FALSE) {
+        if (($fileHandler = fopen($fileName, "r")) !== false) {
  
             // Skip the CSV header row
             fgetcsv($fileHandler);
@@ -205,88 +186,78 @@ class CargarCSV extends Module
             // Default Parent Category ID 
             $idCategory = $this->obtainOrCreateCategory("Videojuegos", 2, $idLanguage);
  
-            while (($row = fgetcsv($fileHandler, 4096, ",")) !== FALSE) {
+            while (($row = fgetcsv($fileHandler, 0, ",")) !== false) {
                 
                 // CSV Mapping: ID[0], Referencia[1], Nombre[2], PrecioSinIVA[3], PrecioConIVA[4],
-                //             Stock[5], Categoria[6], Resumen[7], Descripcion[8], Portada[9]
-                $referenceCSV    = isset($row[1]) ? trim($row[1]) : '';
-                $nameCSV         = isset($row[2]) ? trim($row[2]) : '';
-                $priceRaw        = isset($row[3]) ? trim($row[3]) : ''; // Price excl. tax (stored value in DB)
-                $priceWithTaxRaw = isset($row[4]) ? trim($row[4]) : ''; // Price incl. tax (informational)
+                //             Stock[5], Categoria[6], Resumen[7], Portada[8]
  
-                if ($referenceCSV === '' || $nameCSV === '' || $priceRaw === '') {
-                    continue;
+                if (isset($row[1], $row[2], $row[3])){
+                    $reference = $row[1];
+                    $name      = $row[2];
+                    $priceRaw     = (float)$row[3];
+                    //21% of tax by default
+                    $priceWithTax = isset($row[4]) ? $row[4] : $priceRaw*1.21; 
+                    $stock     = (int)$row[5];
+                    $category  = $row[6];
+                    $summary   = $row[7];
+                    $portrait  = $row[9];
                 }
  
-                // PrestaShop stores prices excl. tax internally; the tax rule is applied at display time
-                $priceCSV     = (float)$priceRaw;
-                $stockCSV     = isset($row[5]) && trim($row[5]) !== '' ? (int)$row[5] : 0;
-                $categoryCSV  = isset($row[6]) ? trim($row[6]) : '';
-                $summaryCSV   = isset($row[7]) ? trim($row[7]) : '';
-                $descriptionCSV = isset($row[8]) ? trim($row[8]) : '';
-                $portraitCSV  = isset($row[9]) ? trim($row[9]) : '';
- 
-                if ($categoryCSV !== '') {
-                    $idCategory = $this->obtainOrCreateCategory($categoryCSV, 2, $idLanguage);
+                //Category headache
+                if ($category !== '') {
+                    $idCategory = $this->obtainOrCreateCategory($category, 2, $idLanguage);
                 } else {
                     $idCategory = 2;
                 }
  
-                if (empty($referenceCSV)) {
-                    continue;
-                }
+                $maybeId = Product::getIdByReference($reference);
  
-                $idProduct = (int)Product::getIdByReference($referenceCSV);
+                //Create the product
+                if ($maybeId === false) {
+
+                    $product = new Product();
+                    $product->reference = $reference;
+                    
+                    $product->name[$idLanguage]              = $name;
+                    $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
+                    $product->description_short[$idLanguage] = stripslashes($summary);
+                    
+                    $product->price = $priceWithTax;
+                    $product->id_category_default = $idCategory;
+                    $product->active = 1;
  
-                // Change the product
-                if ($idProduct > 0) {
-                    $product = new Product($idProduct);
-    
-                    // Update price, category, summary, description and cover
+                    $product->add();
  
-                    // Price excl. tax (PrestaShop applies the tax group rule when displaying it)
-                    $product->price = $priceCSV;
+                // Update the product
+                } else {
+                    $product = new Product($maybeId);
+ 
+                    $product->price = $priceWithTax;
                     
                     // Category
                     $product->id_category_default = $idCategory;
  
                     // Multilanguage text fields
-                    $product->name[$idLanguage]              = $nameCSV;
-                    $product->link_rewrite[$idLanguage]      = Tools::str2url($nameCSV);
-                    $product->description_short[$idLanguage] = stripslashes($summaryCSV);
-                    $product->description[$idLanguage]       = stripslashes($descriptionCSV);
+                    $product->name[$idLanguage]              = $name;
+                    $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
+                    $product->description_short[$idLanguage] = stripslashes($summary);
+
  
                     $product->active = 1; 
                     
                     $product->update();
- 
-                //Create the product
-                } else {
-                    $product = new Product();
-                    $product->reference = $referenceCSV;
-                    
-                    $product->name[$idLanguage]              = $nameCSV;
-                    $product->link_rewrite[$idLanguage]      = Tools::str2url($nameCSV);
-                    $product->description_short[$idLanguage] = stripslashes($summaryCSV);
-                    $product->description[$idLanguage]       = stripslashes($descriptionCSV);
-                    
-                    $product->price = $priceCSV;
-                    $product->id_category_default = $idCategory;
-                    $product->active = 1;
- 
-                    $product->add();
                 }
  
                 // Bind product to the category in the mapping table
                 $product->updateCategories(array($idCategory));
  
                 // Synchronize stock
-                StockAvailable::setQuantity((int)$product->id, 0, $stockCSV);
+                StockAvailable::setQuantity((int)$product->id, 0, $stock);
  
-                // If URL from portrait provided and product's picture is not provided yet, download the photo
+                // If URL from portrait provided and product's picture is not provided yet, download the picture
                 $existingImages = Image::getImages($idLanguage, (int)$product->id);
-                if (!empty($portraitCSV) && empty($existingImages)) {
-                    $this->importrProductsImage($product, $portraitCSV);
+                if (!empty($portrait) && empty($existingImages)) {
+                    $this->importProductsImage($product, $portrait);
                 }
             }
  
@@ -297,14 +268,16 @@ class CargarCSV extends Module
     /**
      * Returns a category ID using its name. 
      * Creates the category under the specified parent if it does not exist.
+     * It's planned to work with Videogames category and subcategorys of it.
      *
      * @param string $name Name of the category
      * @param int $idParent Parent category ID
      * @param int $idLanguage Language ID
-     * @return int Category ID
+     * @return int $finalId id of the category created or searched
      */
     private function obtainOrCreateCategory($name, $idParent, $idLanguage)
     {
+        //FIXME: Add subcategories and work solve the issue to asign them
         $ids = Category::searchByNameAndParentCategoryId($idLanguage, $name, $idParent);
         $finalId = 0;
  
@@ -318,7 +291,7 @@ class CargarCSV extends Module
             $category->id_parent = (int)$idParent;
             $category->active = 1;
             $category->add();
- 
+
             $finalId = (int)$category->id;
         }
  
@@ -328,22 +301,20 @@ class CargarCSV extends Module
     /**
      * Downloads the product image from the given URL (Steam or any other source)
      * and sets it as the cover image of the product in PrestaShop.
+     * @param $product given product of the csv that loads an  
      */
-    private function importrProductsImage($product, $url)
-    {
+    private function importProductsImage($product, $url){
+        //TODO Fix what happens when it receives an empty Image from products 
+        //with only the necessary attributtes
         $image = new Image();
         $image->id_product = (int)$product->id;
         $image->position = Image::getHighestPosition($product->id) + 1;
         $image->cover = true;
  
-        if ($image->add()) 
-            {
-            if (!ImageManager::copyImg($product->id, $image->id, $url, 'products', false)) 
-                {
+        if ($image->add()) {
+            if (!ImageManager::copyImg($product->id, $image->id, $url, 'products', false)) {
                 $image->delete();
+                }
             }
         }
-    }
- 
-    
 }
