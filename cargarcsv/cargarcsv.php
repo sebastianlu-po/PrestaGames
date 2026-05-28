@@ -54,11 +54,11 @@ class CargarCSV extends Module
          */
         if (((bool)Tools::isSubmit('submitCargarCSVModule')) == true) {
 
-            $this->importarCatalogo();
+            $this->importCSV();
         
             $this->_confirmations[] = $this->l('Successfully imported');
         
-            // Ejecuta los procesos por defecto del formulario si los hubiera
+            // Execute postProcess if exists
             $this->postProcess();
         }
  
@@ -166,101 +166,124 @@ class CargarCSV extends Module
         Configuration::updateValue('CARGARCSV_LIVE_MODE', (bool)Tools::getValue('CARGARCSV_LIVE_MODE'));
         return $this->displayConfirmation($this->l('Updated Successfully'));
     }
+    
+
+    /**
+     * CSV columns mapping
+     */
+    private const CSV_ID              = 0;
+    private const CSV_REFERENCE       = 1;
+    private const CSV_NAME            = 2;
+    private const CSV_PRICE_RAW       = 3;
+    private const CSV_PRICE_TAX       = 4;
+    private const CSV_STOCK           = 5;
+    private const CSV_CATEGORY        = 6;
+    private const CSV_SUBCATEGORY     = 7;
+    private const CSV_SUMMARY         = 8;
+    private const CSV_PORTRAIT        = 9;
  
     /**
      * Parses the CSV file and imports or updates products dynamically.
      * It handles dynamic category association and image downloads.
      * Expected CSV columns: ID, Reference, Name, PriceExcludingTax, PriceIncludingTax, Stock, Category, Summary, Description, CoverURL
      */
-    public function importarCatalogo()
+    public function importCSV()
     {
         $fileName = $this->local_path . "catalogo.csv";
  
         if (($fileHandler = fopen($fileName, "r")) !== false) {
- 
             // Skip the CSV header row
             fgetcsv($fileHandler);
  
             $idLanguage = (int)Context::getContext()->language->id;
  
-            // Default Parent Category ID 
-            $idCategory = $this->obtainOrCreateCategory("Videojuegos", 2, $idLanguage);
- 
             while (($row = fgetcsv($fileHandler, 0, ",")) !== false) {
-                
-                // CSV Mapping: ID[0], Referencia[1], Nombre[2], PrecioSinIVA[3], PrecioConIVA[4],
-                //             Stock[5], Categoria[6], Resumen[7], Portada[8]
  
-                if (isset($row[1], $row[2], $row[3])){
-                    $reference = $row[1];
-                    $name      = $row[2];
-                    $priceRaw     = (float)$row[3];
+                if (!empty($row[self::CSV_REFERENCE]) && !empty($row[self::CSV_NAME]) && !empty($row[self::CSV_PRICE_RAW])){
+ 
+                    $reference      = $row[self::CSV_REFERENCE];
+                    $name           = $row[self::CSV_NAME];
+                    $priceRaw       = (float)$row[self::CSV_PRICE_RAW];
                     //21% of tax by default
-                    $priceWithTax = isset($row[4]) ? $row[4] : $priceRaw*1.21; 
-                    $stock     = (int)$row[5];
-                    $category  = $row[6];
-                    $summary   = $row[7];
-                    $portrait  = $row[9];
-                }
+                    $priceWithTax   = empty($row[self::CSV_PRICE_TAX]) ? $priceRaw*1.21 : (float)$row[self::CSV_PRICE_TAX]; 
+                    $stock          = (int)$row[self::CSV_STOCK];
  
-                //Category headache
-                if ($category !== '') {
-                    $idCategory = $this->obtainOrCreateCategory($category, 2, $idLanguage);
-                } else {
-                    $idCategory = 2;
-                }
+                    $parentCategory = $row[self::CSV_CATEGORY];
+                    $sonCategories  = empty($row[self::CSV_SUBCATEGORY]) ?  [] : explode('/', $row[self::CSV_SUBCATEGORY]);
  
-                $maybeId = Product::getIdByReference($reference);
+                    $summary        = $row[self::CSV_SUMMARY];
+                    $portrait       = $row[self::CSV_PORTRAIT];
  
-                //Create the product
-                if ($maybeId === false) {
-
-                    $product = new Product();
-                    $product->reference = $reference;
-                    
-                    $product->name[$idLanguage]              = $name;
-                    $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
-                    $product->description_short[$idLanguage] = stripslashes($summary);
-                    
-                    $product->price = $priceWithTax;
-                    $product->id_category_default = $idCategory;
-                    $product->active = 1;
+                    //Category headache
+                    if ($parentCategory !== '') {
  
-                    $product->add();
+                        $idParentCategory = $this->obtainOrCreateCategory($parentCategory, 2, $idLanguage );
+                        $idCategories = [$idParentCategory];
  
-                // Update the product
-                } else {
-                    $product = new Product($maybeId);
+                        if(!empty($sonCategories)){
+                            foreach ($sonCategories as $sonCategory){
  
-                    $product->price = $priceWithTax;
-                    
-                    // Category
-                    $product->id_category_default = $idCategory;
+                                $sonCategory = trim($sonCategory);
+                                $idSonCategory = $this->obtainOrCreateCategory($sonCategory, $idParentCategory, $idLanguage);
  
-                    // Multilanguage text fields
-                    $product->name[$idLanguage]              = $name;
-                    $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
-                    $product->description_short[$idLanguage] = stripslashes($summary);
-
+                                $idCategories[] = $idSonCategory;
+                            }
+                        }
  
-                    $product->active = 1; 
-                    
-                    $product->update();
-                }
+                    } else {
+                        $idCategories = [2];
+                    }
+    
+                    $maybeId = Product::getIdByReference($reference);
+                    //Create the product
+                    if ($maybeId === false) {
  
-                // Bind product to the category in the mapping table
-                $product->updateCategories(array($idCategory));
+                        $product = new Product();
+                        $product->reference = $reference;
+                        
+                        $product->name[$idLanguage]              = $name;
+                        $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
+                        $product->description_short[$idLanguage] = stripslashes($summary);
+                        
+                        $product->price = $priceWithTax;
+                        $product->id_category_default = $idCategories[0];
+                        $product->active = 1;
+    
+                        $product->add();
+    
+                    // Update the product
+                    } else{
+                        $product = new Product((int)$maybeId);
+    
+                        $product->price = $priceWithTax;
+                        
+                        // Category
+                        $product->id_category_default = $idCategories[0];
+    
+                        // Multilanguage text fields
+                        $product->name[$idLanguage]              = $name;
+                        $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
+                        $product->description_short[$idLanguage] = stripslashes($summary);
  
-                // Synchronize stock
-                StockAvailable::setQuantity((int)$product->id, 0, $stock);
+                        $product->active = 1; 
+                        
+                        $product->update();
+                    }
+    
+                    // Bind product to the category in the mapping table
+                    $product->updateCategories($idCategories);
+    
+                    // Synchronize stock
+                    StockAvailable::setQuantity((int)$product->id, 0, $stock);
+    
+                    // If URL from portrait provided and product's picture is not provided yet, download the picture
+                    $existingImages = Image::getImages($idLanguage, (int)$product->id);
+                    if (!empty($portrait) && empty($existingImages)) {
+                        $this->importProductsImage($product, $portrait);
+                    }
  
-                // If URL from portrait provided and product's picture is not provided yet, download the picture
-                $existingImages = Image::getImages($idLanguage, (int)$product->id);
-                if (!empty($portrait) && empty($existingImages)) {
-                    $this->importProductsImage($product, $portrait);
                 }
             }
- 
             fclose($fileHandler);
         }
     }
@@ -277,7 +300,6 @@ class CargarCSV extends Module
      */
     private function obtainOrCreateCategory($name, $idParent, $idLanguage)
     {
-        //FIXME: Add subcategories and work solve the issue to asign them
         $ids = Category::searchByNameAndParentCategoryId($idLanguage, $name, $idParent);
         $finalId = 0;
  
@@ -301,11 +323,9 @@ class CargarCSV extends Module
     /**
      * Downloads the product image from the given URL (Steam or any other source)
      * and sets it as the cover image of the product in PrestaShop.
-     * @param $product given product of the csv that loads an  
+     * @param $product product with image from 
      */
     private function importProductsImage($product, $url){
-        //TODO Fix what happens when it receives an empty Image from products 
-        //with only the necessary attributtes
         $image = new Image();
         $image->id_product = (int)$product->id;
         $image->position = Image::getHighestPosition($product->id) + 1;
@@ -314,7 +334,7 @@ class CargarCSV extends Module
         if ($image->add()) {
             if (!ImageManager::copyImg($product->id, $image->id, $url, 'products', false)) {
                 $image->delete();
-                }
             }
         }
+    }
 }
