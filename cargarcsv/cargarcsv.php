@@ -1,5 +1,12 @@
 <?php
- 
+/**
+ * importer Module for PrestaShop
+ *
+ * This module allows to import products from CSV files into PrestaShop.
+ *
+ * @author    Sebastián Luna Polo
+ * @version   1.0.1
+ */
 if (!defined('_PS_VERSION_')) {
     exit;
 }
@@ -21,7 +28,7 @@ class CargarCSV extends Module
         parent::__construct();
  
         $this->displayName = $this->l('CargarCSV');
-        $this->description = $this->l('Importa CSV a productos de prestashop');
+        $this->description = $this->l('Import products from CSV');
  
         $this->confirmUninstall = $this->l('Are you sure you want to uninstall?');
  
@@ -52,7 +59,7 @@ class CargarCSV extends Module
         /**
          * If values have been submitted in the form, process.
          */
-        if (((bool)Tools::isSubmit('submitCargarCSVModule')) == true) {
+        if (((bool)Tools::isSubmit('Import_catalogue')) == true) {
 
             $this->importCSV();
         
@@ -83,7 +90,7 @@ class CargarCSV extends Module
         $helper->allow_employee_form_lang = Configuration::get('PS_BO_ALLOW_EMPLOYEE_FORM_LANG', 0);
  
         $helper->identifier = $this->identifier;
-        $helper->submit_action = 'submitCargarCSVModule';
+        $helper->submit_action = 'Import_catalogue';
         $helper->currentIndex = $this->context->link->getAdminLink('AdminModules', false)
             .'&configure='.$this->name.'&tab_module='.$this->tab.'&module_name='.$this->name;
         $helper->token = Tools::getAdminTokenLite('AdminModules');
@@ -204,8 +211,6 @@ class CargarCSV extends Module
                     $reference      = $row[self::CSV_REFERENCE];
                     $name           = $row[self::CSV_NAME];
                     $priceRaw       = (float)$row[self::CSV_PRICE_RAW];
-                    //21% of tax by default
-                    $priceWithTax   = empty($row[self::CSV_PRICE_TAX]) ? $priceRaw*1.21 : (float)$row[self::CSV_PRICE_TAX]; 
                     $stock          = (int)$row[self::CSV_STOCK];
  
                     $parentCategory = $row[self::CSV_CATEGORY];
@@ -245,7 +250,8 @@ class CargarCSV extends Module
                         $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
                         $product->description_short[$idLanguage] = stripslashes($summary);
                         
-                        $product->price = $priceWithTax;
+                        $product->price = $priceRaw;
+                        $product->id_tax_rules_group = 1;
                         $product->id_category_default = $idCategories[0];
                         $product->active = 1;
     
@@ -255,7 +261,8 @@ class CargarCSV extends Module
                     } else{
                         $product = new Product((int)$maybeId);
     
-                        $product->price = $priceWithTax;
+                        $product->price = $priceRaw;
+                        $product->id_tax_rules_group = 1;
                         
                         // Category
                         $product->id_category_default = $idCategories[0];
@@ -265,7 +272,7 @@ class CargarCSV extends Module
                         $product->link_rewrite[$idLanguage]      = Tools::str2url($name);
                         $product->description_short[$idLanguage] = stripslashes($summary);
  
-                        $product->active = 1; 
+                        $product->active = 1;
                         
                         $product->update();
                     }
@@ -316,25 +323,27 @@ class CargarCSV extends Module
 
             $finalId = (int)$category->id;
         }
- 
+
         return $finalId;
     }
  
-    /**
-     * Downloads the product image from the given URL (Steam or any other source)
-     * and sets it as the cover image of the product in PrestaShop.
-     * @param $product product with image from 
-     */
-    private function importProductsImage($product, $url){
-        $image = new Image();
-        $image->id_product = (int)$product->id;
-        $image->position = Image::getHighestPosition($product->id) + 1;
-        $image->cover = true;
- 
-        if ($image->add()) {
-            if (!ImageManager::copyImg($product->id, $image->id, $url, 'products', false)) {
-                $image->delete();
+        /**
+        *  Downloads the product image from the given URL and sets it as the cover image.
+        * If the image cannot be copied, the created Image record is deleted to avoid orphans.
+        *
+        * @param Product $product  The product to assign the image to
+        * @param string  $url      Public URL of the image to download
+        */
+        private function importProductsImage($product, $url){
+            $image = new Image();
+            $image->id_product = (int)$product->id;
+            $image->position = Image::getHighestPosition($product->id) + 1;
+            $image->cover = true;
+    
+            if ($image->add()) {
+                if (!ImageManager::copyImg($product->id, $image->id, $url, 'products', false)) {
+                    $image->delete();
+                }
             }
         }
-    }
 }
